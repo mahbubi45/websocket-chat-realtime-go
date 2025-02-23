@@ -24,19 +24,3 @@ func GetChatHistory(db *gorm.DB, chatID string) ([]Message, error) {
 
 	return messages, nil
 }
-
-func GetChatHistoryGrup(db *gorm.DB, chatID string) ([]MessageGrup, error) {
-	var chatMessages []MessageGrup
-
-	// Ambil semua pesan dalam grup dan preload nama pengirim
-	err := db.Preload("UserSender").
-		Where("id = ?", chatID).
-		Order("created_at ASC").
-		Find(&chatMessages).Error
-
-	if err != nil {
-		return nil, err
-	}
-
-	return chatMessages, nil
-}

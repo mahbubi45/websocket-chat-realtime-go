@@ -11,6 +11,7 @@ import (
 // Chat menyimpan informasi chat (bisa pribadi atau grup)
 type Chat struct {
 	ID        string    `gorm:"type:char(36);primaryKey"`
+	Name      string    `gorm:"null" json:"Name"`
 	GroupID   string    `gorm:"type:char(36);index"` // NULL jika chat pribadi
 	CreatedAt time.Time `gorm:"autoCreateTime"`
 	Group     *Group    `gorm:"foreignKey:GroupID"` // Relasi opsional ke grup
