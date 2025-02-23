@@ -13,11 +13,11 @@ import (
 )
 
 // // WebSocket Upgrader
-var upgrader = websocket.Upgrader{
-	CheckOrigin: func(r *http.Request) bool {
-		return true
-	},
-}
+// var upgrader = websocket.Upgrader{
+// 	CheckOrigin: func(r *http.Request) bool {
+// 		return true
+// 	},
+// }
 
 // // Client map
 // var clients = make(map[*websocket.Conn]string)
@@ -146,45 +146,61 @@ var upgrader = websocket.Upgrader{
 // 	log.Fatal(http.ListenAndServe(":7070", nil))
 // }
 
-// Channel untuk broadcast pesan grup
-var broadcastGroup = make(chan models.Message)
-var broadcastChatGroup = make(chan models.Chat)
+// WebSocket Upgrader
+var upgrader = websocket.Upgrader{
+	CheckOrigin: func(r *http.Request) bool {
+		return true
+	},
+}
+
+// Struktur data gabungan
+type GroupMessage struct {
+	Msg  models.Message
+	Chat models.Chat
+}
+
 var muGourp sync.Mutex
 
-// Handler WebSocket untuk grup
-// Channel untuk broadcast pesan grup
-var (
-	groups = make(map[string]map[*websocket.Conn]string) // 🔥 Simpan koneksi per grup
-)
+// Channel yang menampung GroupMessage
+var broadcastGroup = make(chan GroupMessage)
+var groups = make(map[string]map[*websocket.Conn]string)
 
-// Handler WebSocket untuk grup
+// Channel untuk broadcast pesan grup
 func HandleConnectionsGrupController(db *gorm.DB, w http.ResponseWriter, r *http.Request) {
 	ws, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		log.Println("WebSocket upgrade gagal:", err)
 		return
 	}
-	defer ws.Close()
+	defer func() {
+		// Hapus user saat disconnect
+		muGourp.Lock()
+		if groupID := r.URL.Query().Get("grup_id"); groupID != "" {
+			delete(groups[groupID], ws)
+		}
+		muGourp.Unlock()
+		ws.Close()
+	}()
 
-	// 🔥 Ambil user_id dan grup_id dari query params
+	// Ambil user_id dan grup_id dari query params
 	userID := r.URL.Query().Get("user_id")
-	groupID := r.URL.Query().Get("grup_id") // Sesuai request lo
+	groupID := r.URL.Query().Get("grup_id")
 	if userID == "" || groupID == "" {
-		log.Println("❌ user_id atau grup_id kosong!")
+		log.Println("user_id atau grup_id kosong!")
 		ws.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, "Parameter tidak lengkap"))
 		return
 	}
 
-	// 🔥 Cek apakah user adalah anggota grup
+	// Cek apakah user adalah anggota grup
 	var userGroupMember models.GroupMember
-	err = db.Where("group_id = ? AND user_id = ? ", groupID, userID).First(&userGroupMember).Error
+	err = db.Where("group_id = ? AND user_id = ?", groupID, userID).First(&userGroupMember).Error
 	if err != nil {
-		log.Println("❌ User bukan anggota grup:", err)
+		log.Println("User bukan anggota grup:", err)
 		ws.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, "Bukan anggota grup"))
 		return
 	}
 
-	// 🔥 Masukkan user ke daftar koneksi WebSocket
+	// Masukkan user ke daftar koneksi WebSocket
 	muGourp.Lock()
 	if groups[groupID] == nil {
 		groups[groupID] = make(map[*websocket.Conn]string)
@@ -192,49 +208,36 @@ func HandleConnectionsGrupController(db *gorm.DB, w http.ResponseWriter, r *http
 	groups[groupID][ws] = userID
 	muGourp.Unlock()
 
-	log.Println("✅ User", userID, "bergabung di grup", groupID)
+	log.Println("User", userID, "bergabung di grup", groupID)
+
+	// Kirim riwayat chat grup ke user baru
+	chatHistory, err := models.GetChatHistoryGrup(db, groupID)
+	if err != nil {
+		log.Println("Gagal mengambil riwayat chat:", err)
+		ws.WriteJSON(map[string]string{"error": "Gagal mengambil riwayat chat"})
+	} else {
+		for _, msg := range chatHistory {
+			if err := ws.WriteJSON(msg); err != nil {
+				log.Println("Gagal mengirim pesan riwayat chat:", err)
+				break
+			}
+		}
+	}
 
 	// Loop untuk terima pesan
 	for {
-
-		// Kirim riwayat chat grup ke user baru
-		chatHistory, err := models.GetChatHistoryGrup(db, groupID)
-		if err != nil {
-			log.Println("⚠️ Gagal mengambil riwayat chat:", err)
-			// Tanggapi error, misalnya dengan mengirimkan pesan error ke client
-			ws.WriteJSON(map[string]string{
-				"error": "Gagal mengambil riwayat chat",
-			})
-		} else {
-			// Mengirimkan riwayat chat ke client melalui WebSocket
-			for _, msg := range chatHistory {
-				if err := ws.WriteJSON(msg); err != nil {
-					log.Println("⚠️ Gagal mengirim pesan riwayat chat:", err)
-					break
-				}
-			}
-		}
-
 		var msgGroup models.Message
 		errMsGroup := ws.ReadJSON(&msgGroup)
 		if errMsGroup != nil {
-			log.Println("❌ Kesalahan membaca pesan:", err)
+			log.Println("Kesalahan membaca pesan:", errMsGroup)
 			break
 		}
-
 		msgGroup.SenderID = userID
 
-		chatID, err := models.GetExistingChatID(db, msgGroup.SenderID, msgGroup.ReceiverID)
+		chatID, err := models.GetExistingChatIDByIdSender(db, msgGroup.SenderID)
 		if err != nil {
 			log.Println("Gagal mendapatkan chat ID:", err)
 			return
-		}
-
-		var msgChatGroup models.Chat
-		errChatMsGroup := ws.ReadJSON(&msgChatGroup)
-		if errChatMsGroup != nil {
-			log.Println("❌ Kesalahan membaca pesan:", err)
-			break
 		}
 
 		if chatID == "" {
@@ -246,49 +249,25 @@ func HandleConnectionsGrupController(db *gorm.DB, w http.ResponseWriter, r *http
 			}
 		}
 
-		if chatID == "" {
-			// Kalau chat belum ada, buat baru
-			chatID, err = models.CreateNewChatGroup(db, groupID)
-			if err != nil {
-				log.Println("Gagal membuat chat baru:", err)
-				continue
-			}
-		}
-
-		msgGroup.ChatID = chatID
-
-		// get data chat by id chat
-		errGetChat := db.Where("id = ?", msgGroup.ChatID).
-			First(&msgChatGroup).Error
-		if errGetChat != nil {
-			log.Println("❌ Gagal menemukan grup berdasarkan ChatID:", err)
-			continue
-		}
-
-		// 🔥 Simpan pesan ke database
-		errMsGroups := models.SaveMessageToDB(db, msgGroup.SenderID, msgGroup.ChatID, "", msgGroup.Content)
+		// Simpan pesan ke database
+		errMsGroups := models.SaveMessageToDB(db, msgGroup.SenderID, chatID, "", msgGroup.Content)
 		if errMsGroups != nil {
-			log.Println("❌ Gagal menyimpan pesan:", err)
+			log.Println("Gagal menyimpan pesan:", errMsGroups)
 			continue
 		}
 
-		// 🔥 Kirim ke channel broadcast
-		msgGroup.SenderID = userID
-		broadcastChatGroup <- msgChatGroup
-		broadcastGroup <- msgGroup
+		// Kirim pesan ke semua anggota grup
+		broadcastGroup <- GroupMessage{Msg: msgGroup, Chat: models.Chat{GroupID: groupID}}
 	}
-
-	// Hapus user saat disconnect
-	muGourp.Lock()
-	delete(groups[groupID], ws)
-	muGourp.Unlock()
 }
 
+// Fungsi untuk menangani broadcast pesan grup
 func HandleMessagesGrupModel() {
 	for {
-		msg := <-broadcastGroup
-		chatGetIdGroup := <-broadcastChatGroup
-		groupID := chatGetIdGroup.GroupID
+		groupMsg := <-broadcastGroup
+
+		msg := groupMsg.Msg
+		groupID := groupMsg.Chat.GroupID // Ambil ID grup dari chat
 
 		// Kirim pesan ke semua anggota grup
 		if groupMembers, ok := groups[groupID]; ok {

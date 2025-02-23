@@ -23,6 +23,31 @@ type GroupMember struct {
 	Group    Group     `gorm:"foreignKey:GroupID"`
 }
 
+func GetExistingChatIDByIdSender(db *gorm.DB, senderID string) (string, error) {
+	var chatID string
+
+	// Cek apakah ada chat antara sender_id dan receiver_id, atau sebaliknya
+	err := db.Raw(`
+        SELECT chat_id FROM messages 
+        WHERE (sender_id = ?) 
+
+        LIMIT 1
+    `, senderID).Scan(&chatID).Error
+
+	if err == nil && chatID != "" {
+		log.Println("Chat sudah ada dari messages, pakai ID:", chatID)
+		return chatID, nil
+	}
+
+	// Kalau error bukan "record not found", return error
+	if err != nil && err != gorm.ErrRecordNotFound {
+		log.Println("Gagal mencari chat:", err)
+		return "", err
+	}
+
+	return "", nil
+}
+
 func CreateNewChatGroup(db *gorm.DB, group_id string) (string, error) {
 	newChat := Chat{
 		ID:        uuid.NewString(),
