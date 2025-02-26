@@ -16,7 +16,8 @@ func GetChatHistory(db *gorm.DB, chatID string) ([]Message, error) {
 
 	// Ambil semua pesan yang ada di chat ini (baik yang dikirim maupun diterima)
 	err := db.Where("chat_id = ?", chatID).
-		Order("created_at ASC").Find(&messages).Error
+		Order("created_at ASC").
+		Find(&messages).Error
 
 	if err != nil {
 		return nil, err

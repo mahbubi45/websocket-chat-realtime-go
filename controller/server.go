@@ -8,11 +8,13 @@ import (
 	"gorm.io/gorm"
 )
 
-var DB *gorm.DB
+type Server struct {
+	DB *gorm.DB
+}
 
-func ConnectDatabase() {
+func (s *Server) ConnectDatabase() {
 	dsn := "root:5431sabi@tcp(localhost:3306)/chat_db?charset=utf8mb4&parseTime=True&loc=Local"
-	database, err := gorm.Open(mysql.Open(dsn), &gorm.Config{})
+	cndatabase, err := gorm.Open(mysql.Open(dsn), &gorm.Config{})
 	if err != nil {
 		log.Fatal("Gagal konek ke database:", err)
 	}
@@ -24,10 +26,10 @@ func ConnectDatabase() {
 	// 	&models.ChatMember{},
 	// 	&models.Message{})
 
-	DB = database
+	s.DB = cndatabase
 	fmt.Println("Database Connected!")
 }
 
-func GetDB() *gorm.DB {
-	return DB
+func (s *Server) GetDB() *gorm.DB {
+	return s.DB
 }

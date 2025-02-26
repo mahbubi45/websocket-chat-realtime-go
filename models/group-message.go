@@ -30,7 +30,6 @@ func GetExistingChatIDByIdSender(db *gorm.DB, senderID string) (string, error) {
 	err := db.Raw(`
         SELECT chat_id FROM messages 
         WHERE (sender_id = ?) 
-
         LIMIT 1
     `, senderID).Scan(&chatID).Error
 
