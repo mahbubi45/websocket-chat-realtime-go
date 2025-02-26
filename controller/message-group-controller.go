@@ -7,7 +7,6 @@ import (
 	"websocket-chat/models"
 
 	"github.com/gorilla/websocket"
-	"gorm.io/gorm"
 )
 
 // WebSocket upgraderGroup
@@ -18,19 +17,14 @@ var upgraderGroup = websocket.Upgrader{
 }
 
 // Struktur data gabungan
-type GroupMessage struct {
-	Msg  models.Message
-	Chat models.Chat
-}
-
 var muGourp sync.Mutex
 
 // Channel yang menampung GroupMessage
-var broadcastGroup = make(chan GroupMessage)
+var broadcastGroup = make(chan models.GroupMessage)
 var groups = make(map[string]map[*websocket.Conn]string)
 
 // Channel untuk broadcast pesan grup
-func (s *Server) HandleConnectionsGrupController(db *gorm.DB, w http.ResponseWriter, r *http.Request) {
+func (s *Server) HandleConnectionsGrupController(w http.ResponseWriter, r *http.Request) {
 	ws, err := upgraderGroup.Upgrade(w, r, nil)
 	if err != nil {
 		log.Println("WebSocket upgrade gagal:", err)
@@ -57,7 +51,7 @@ func (s *Server) HandleConnectionsGrupController(db *gorm.DB, w http.ResponseWri
 
 	// Cek apakah user adalah anggota grup
 	var userGroupMember models.GroupMember
-	err = db.Where("group_id = ? AND user_id = ?", groupID, userID).First(&userGroupMember).Error
+	err = s.DB.Where("group_id = ? AND user_id = ?", groupID, userID).First(&userGroupMember).Error
 	if err != nil {
 		log.Println("User bukan anggota grup:", err)
 		ws.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, "Bukan anggota grup"))
@@ -75,7 +69,7 @@ func (s *Server) HandleConnectionsGrupController(db *gorm.DB, w http.ResponseWri
 	log.Println("User", userID, "bergabung di grup", groupID)
 
 	// Kirim riwayat chat grup ke user baru
-	chatHistory, err := models.GetChatHistoryGrup(db, groupID)
+	chatHistory, err := models.GetChatHistoryGrup(s.DB, groupID)
 	if err != nil {
 		log.Println("Gagal mengambil riwayat chat:", err)
 		ws.WriteJSON(map[string]string{"error": "Gagal mengambil riwayat chat"})
@@ -98,7 +92,7 @@ func (s *Server) HandleConnectionsGrupController(db *gorm.DB, w http.ResponseWri
 		}
 		msgGroup.SenderID = userID
 
-		chatID, err := models.GetExistingChatIDByIdSender(db, msgGroup.SenderID)
+		chatID, err := models.GetExistingChatIDByIdSender(s.DB, msgGroup.SenderID)
 		if err != nil {
 			log.Println("Gagal mendapatkan chat ID:", err)
 			return
@@ -106,7 +100,7 @@ func (s *Server) HandleConnectionsGrupController(db *gorm.DB, w http.ResponseWri
 
 		if chatID == "" {
 			// Chat belum ada, buat chat baru
-			chatID, err = models.CreateNewChatGroup(db, groupID)
+			chatID, err = models.CreateNewChatGroup(s.DB, groupID)
 			if err != nil {
 				log.Println("Gagal membuat chat baru:", err)
 				return
@@ -114,14 +108,14 @@ func (s *Server) HandleConnectionsGrupController(db *gorm.DB, w http.ResponseWri
 		}
 
 		// Simpan pesan ke database
-		errMsGroups := models.SaveMessageToDB(db, msgGroup.SenderID, chatID, "", msgGroup.Content)
+		errMsGroups := models.SaveMessageToDB(s.DB, msgGroup.SenderID, chatID, "", msgGroup.Content)
 		if errMsGroups != nil {
 			log.Println("Gagal menyimpan pesan:", errMsGroups)
 			continue
 		}
 
 		// Kirim pesan ke semua anggota grup
-		broadcastGroup <- GroupMessage{Msg: msgGroup, Chat: models.Chat{GroupID: groupID}}
+		broadcastGroup <- models.GroupMessage{Msg: msgGroup, Chat: models.Chat{GroupID: groupID}}
 	}
 }
 

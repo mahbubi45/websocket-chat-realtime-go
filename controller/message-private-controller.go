@@ -25,7 +25,7 @@ var mu sync.Mutex
 var broadcast = make(chan models.Message)
 
 // Handler WebSocket
-func (s *Server) HandleConnectionsPrivateMessageController(db *gorm.DB, w http.ResponseWriter, r *http.Request) {
+func (s *Server) HandleConnectionsPrivateMessageController(w http.ResponseWriter, r *http.Request) {
 	ws, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		log.Println("WebSocket upgrade gagal:", err)
@@ -46,7 +46,7 @@ func (s *Server) HandleConnectionsPrivateMessageController(db *gorm.DB, w http.R
 
 	log.Println("User terhubung:", userID)
 
-	messages, err := models.GetMessagesByUserID(db, userID)
+	messages, err := models.GetMessagesByUserID(s.DB, userID)
 	if err != nil {
 		log.Println("Gagal mendapatkan pesan:", err)
 	}
@@ -76,24 +76,15 @@ func (s *Server) HandleConnectionsPrivateMessageController(db *gorm.DB, w http.R
 
 		msg.SenderID = userID
 
-		chatID, err := models.GetExistingChatID(db, msg.SenderID, msg.ReceiverID)
+		chatID, err := models.GetExistingChatID(s.DB, msg.SenderID, msg.ReceiverID)
 		if err != nil {
 			log.Println("Gagal mendapatkan chat ID:", err)
 			return
 		}
 
 		if chatID == "" {
-			// Chat belum ada, buat chat baru
-			chatID, err = models.CreateNewChat(db)
-			if err != nil {
-				log.Println("Gagal membuat chat baru:", err)
-				return
-			}
-		}
-
-		if chatID == "" {
 			// Kalau chat belum ada, buat baru
-			chatID, err = models.CreateNewChat(db)
+			chatID, err = models.CreateNewChat(s.DB)
 			if err != nil {
 				log.Println("Gagal membuat chat baru:", err)
 				continue
@@ -103,13 +94,14 @@ func (s *Server) HandleConnectionsPrivateMessageController(db *gorm.DB, w http.R
 		msg.ChatID = chatID
 
 		// Simpan pesan ke database
-		if err := models.SaveMessageToDB(db, msg.SenderID, chatID, msg.ReceiverID, msg.Content); err != nil {
+		if err := models.SaveMessageToDB(s.DB, msg.SenderID, chatID, msg.ReceiverID, msg.Content); err != nil {
 			log.Println("Gagal menyimpan pesan:", err)
 			continue
 		}
 
 		// Kirim pesan ke penerima
 		broadcast <- msg
+
 	}
 }
 
@@ -120,7 +112,18 @@ func (s *Server) HandleMessagesPrivateModel() {
 
 		mu.Lock()
 		for client, userID := range clients {
-			if userID == msg.ReceiverID || userID == msg.SenderID {
+			// Jangan kirim ke pengirimnya sendiri
+			if userID == msg.SenderID {
+				continue
+			}
+
+			// Jika pesan memiliki ID grup, jangan dikirim ke private chat
+			if msg.ChatID != "" && IsGroupChat(s.DB, msg.ChatID) {
+				continue
+			}
+
+			// Kirim hanya ke penerima
+			if userID == msg.ReceiverID {
 				if err := client.WriteJSON(msg); err != nil {
 					log.Println("Kesalahan mengirim pesan:", err)
 					client.Close()
@@ -130,4 +133,15 @@ func (s *Server) HandleMessagesPrivateModel() {
 		}
 		mu.Unlock()
 	}
+}
+
+// Fungsi untuk mengecek apakah ChatID adalah grup berdasarkan database
+func IsGroupChat(db *gorm.DB, chatID string) bool {
+	var isGroup bool
+	err := db.Raw("SELECT group_id FROM chats WHERE id = ?", chatID).Scan(&isGroup).Error
+	if err != nil {
+		log.Println("Gagal mengecek tipe chat:", err)
+		return false // Default ke false jika ada kesalahan
+	}
+	return isGroup
 }

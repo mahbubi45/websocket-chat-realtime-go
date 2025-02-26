@@ -74,6 +74,7 @@ func GetExistingChatID(db *gorm.DB, senderID string, receiverID string) (string,
 func CreateNewChat(db *gorm.DB) (string, error) {
 	newChat := Chat{
 		ID:        uuid.NewString(),
+		Name:      "chat Private",
 		CreatedAt: time.Now(),
 	}
 

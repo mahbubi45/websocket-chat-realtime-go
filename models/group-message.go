@@ -8,6 +8,11 @@ import (
 	"gorm.io/gorm"
 )
 
+type GroupMessage struct {
+	Msg  Message
+	Chat Chat
+}
+
 type Group struct {
 	ID        string        `gorm:"type:char(36);primaryKey"`
 	Name      string        `gorm:"type:varchar(255);not null"`
