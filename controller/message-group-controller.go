@@ -1,13 +1,83 @@
 package controller
 
 import (
+	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"sync"
+	"websocket-chat/helper"
 	"websocket-chat/models"
 
 	"github.com/gorilla/websocket"
 )
+
+// controller selected user yang akan di masukkan ke group
+func (s *Server) UpdateSelectedUserToGrupController(w http.ResponseWriter, r *http.Request) {
+	selectIdUser := helper.SelectedIdUser{}
+
+	if err := json.NewDecoder(r.Body).Decode(&selectIdUser); err != nil {
+		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+
+	// Cek apakah id_user kosong
+	if len(selectIdUser.IDUser) == 0 {
+		http.Error(w, "id_user tidak boleh kosong", http.StatusBadRequest)
+		return
+	}
+
+	errSelectedUser := models.UpdateStatusSelectedUserToGroup(s.DB, selectIdUser.IDUser)
+
+	if errSelectedUser != nil {
+		http.Error(w, "error ya", http.StatusBadRequest)
+		return
+	}
+
+	// Response sukses
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"status":  "success",
+		"message": "Berhasil memperbarui status pengguna",
+	})
+
+}
+
+// tambahkan ke grup yang sudah di selected true
+func (s *Server) AddGrupMemberUsersController(w http.ResponseWriter, r *http.Request) {
+	group := models.Group{}
+	var idGroup string
+
+	if err := json.NewDecoder(r.Body).Decode(&group); err != nil {
+		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+
+	if group.ID != "" {
+		idGroup = group.ID
+		fmt.Println("ini menambahkan user dengan grup yang sudah di buat", idGroup)
+	} else if group.Name != "" {
+		idGroup = models.AddGroup(s.DB, group.Name)
+		fmt.Println("ini id group yang baru saja dibuat: ", idGroup)
+	}
+
+	// Tambahkan user ke grup yang sudah dipastikan ada
+	err := models.CreatedUserSelectedToGrupmember(s.DB, idGroup)
+	if err != nil {
+		http.Error(w, "Gagal menambahkan user ke grup", http.StatusBadRequest)
+		return
+	}
+
+	// Response sukses
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"status":  "success",
+		"message": "Berhasil membuat grup",
+	})
+
+}
 
 // WebSocket upgraderGroup
 var upgraderGroup = websocket.Upgrader{
@@ -26,10 +96,12 @@ var groups = make(map[string]map[*websocket.Conn]string)
 // Channel untuk broadcast pesan grup
 func (s *Server) HandleConnectionsGrupController(w http.ResponseWriter, r *http.Request) {
 	ws, err := upgraderGroup.Upgrade(w, r, nil)
+
 	if err != nil {
 		log.Println("WebSocket upgrade gagal:", err)
 		return
 	}
+
 	defer func() {
 		// Hapus user saat disconnect
 		muGourp.Lock()
@@ -40,10 +112,20 @@ func (s *Server) HandleConnectionsGrupController(w http.ResponseWriter, r *http.
 		ws.Close()
 	}()
 
+	var groupID *string
+
+	// Ambil nilai dari query parameter
+	groupIDStr := r.URL.Query().Get("grup_id")
+
 	// Ambil user_id dan grup_id dari query params
 	userID := r.URL.Query().Get("user_id")
-	groupID := r.URL.Query().Get("grup_id")
-	if userID == "" || groupID == "" {
+
+	// Jika kosong, biarkan nil, jika ada isi, gunakan nilai string-nya
+	if groupIDStr != "" {
+		groupID = &groupIDStr
+	}
+
+	if userID == "" || groupID == nil {
 		log.Println("user_id atau grup_id kosong!")
 		ws.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, "Parameter tidak lengkap"))
 		return
@@ -51,7 +133,8 @@ func (s *Server) HandleConnectionsGrupController(w http.ResponseWriter, r *http.
 
 	// Cek apakah user adalah anggota grup
 	var userGroupMember models.GroupMember
-	err = s.DB.Where("group_id = ? AND user_id = ?", groupID, userID).First(&userGroupMember).Error
+	err = s.DB.Where("group_id = ? AND user_id = ?", groupID, userID).
+		First(&userGroupMember).Error
 	if err != nil {
 		log.Println("User bukan anggota grup:", err)
 		ws.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, "Bukan anggota grup"))
@@ -60,16 +143,16 @@ func (s *Server) HandleConnectionsGrupController(w http.ResponseWriter, r *http.
 
 	// Masukkan user ke daftar koneksi WebSocket
 	muGourp.Lock()
-	if groups[groupID] == nil {
-		groups[groupID] = make(map[*websocket.Conn]string)
+	if groups[*groupID] == nil {
+		groups[*groupID] = make(map[*websocket.Conn]string)
 	}
-	groups[groupID][ws] = userID
+	groups[*groupID][ws] = userID
 	muGourp.Unlock()
 
 	log.Println("User", userID, "bergabung di grup", groupID)
 
 	// Kirim riwayat chat grup ke user baru
-	chatHistory, err := models.GetChatHistoryGrup(s.DB, groupID)
+	chatHistory, err := models.GetChatHistoryGrup(s.DB, *groupID)
 	if err != nil {
 		log.Println("Gagal mengambil riwayat chat:", err)
 		ws.WriteJSON(map[string]string{"error": "Gagal mengambil riwayat chat"})
@@ -90,6 +173,7 @@ func (s *Server) HandleConnectionsGrupController(w http.ResponseWriter, r *http.
 			log.Println("Kesalahan membaca pesan:", errMsGroup)
 			break
 		}
+
 		msgGroup.SenderID = userID
 
 		chatID, err := models.GetExistingChatIDByIdSender(s.DB, msgGroup.SenderID)
@@ -128,7 +212,7 @@ func (s *Server) HandleMessagesGrupModel() {
 		groupID := groupMsg.Chat.GroupID // Ambil ID grup dari chat
 
 		// Kirim pesan ke semua anggota grup
-		if groupMembers, ok := groups[groupID]; ok {
+		if groupMembers, ok := groups[*groupID]; ok {
 			for client := range groupMembers {
 				// Pastikan pesan tidak dikirim ke pengirimnya
 				if groupMembers[client] != msg.SenderID {

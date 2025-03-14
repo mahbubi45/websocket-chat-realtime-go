@@ -1,6 +1,7 @@
 package models
 
 import (
+	"fmt"
 	"log"
 	"time"
 
@@ -13,19 +14,72 @@ type GroupMessage struct {
 	Chat Chat
 }
 
-type Group struct {
-	ID        string        `gorm:"type:char(36);primaryKey"`
-	Name      string        `gorm:"type:varchar(255);not null"`
-	Members   []GroupMember `gorm:"foreignKey:GroupID"` // Relasi ke member
-	CreatedAt time.Time     `gorm:"autoCreateTime"`
-}
-
 type GroupMember struct {
 	ID       string    `gorm:"type:char(36);primaryKey"`
 	GroupID  string    `gorm:"type:char(36);not null"`
 	UserID   string    `gorm:"type:char(36);not null"`
 	JoinedAt time.Time `gorm:"autoCreateTime"`
 	Group    Group     `gorm:"foreignKey:GroupID"`
+}
+
+// buat update user statusnya di select apa ngak untuk ke grup
+func UpdateStatusSelectedUserToGroup(db *gorm.DB, idUser []string) error {
+	var users User
+
+	if len(idUser) == 0 {
+		return fmt.Errorf("id user tidak boleh kosong")
+	}
+
+	return db.Model(&users).
+		Where("id IN ?", idUser).
+		Update("selected", true).Error
+
+}
+
+func UpdateStatusUnSelectedUserToGroup(db *gorm.DB) error {
+	var users User
+
+	return db.Model(&users).
+		Where("selected = ? ", true).
+		Update("selected", false).Error
+
+}
+
+// buat grup dari user yang sudah di selected
+func CreatedUserSelectedToGrupmember(db *gorm.DB, idGroup string) error {
+	// buat penampung user yang di selected
+	var selecteduser []User
+	// Ambil semua user yang selected = true
+	if err := db.Where("selected = ?", true).
+		Find(&selecteduser).Error; err != nil {
+		log.Println("Gagal mengambil data user:", err)
+		return err
+	}
+
+	if len(selecteduser) == 0 {
+		return fmt.Errorf("tidak ada user yang dipilih")
+	}
+
+	// Looping setiap user dan masukkan ke GroupMember
+	var groupMembers []GroupMember //penampung groupMember
+	for _, users := range selecteduser {
+		groupMembers = append(groupMembers, GroupMember{
+			ID:       uuid.NewString(), // Generate UUID baru untuk setiap entri
+			GroupID:  idGroup,
+			UserID:   users.ID, // Pastikan ambil UserID dari loop
+			JoinedAt: time.Now(),
+		})
+	}
+
+	if err := db.Create(&groupMembers).Error; err != nil {
+		log.Println("Gagal menambahkan user ke grup:", err)
+		return err
+	}
+
+	//ketika sudah di tambahkan ke grup maka auto unselected lagi
+	UpdateStatusUnSelectedUserToGroup(db)
+
+	return nil
 }
 
 func GetExistingChatIDByIdSender(db *gorm.DB, senderID string) (string, error) {
@@ -52,7 +106,7 @@ func GetExistingChatIDByIdSender(db *gorm.DB, senderID string) (string, error) {
 	return "", nil
 }
 
-func CreateNewChatGroup(db *gorm.DB, group_id string) (string, error) {
+func CreateNewChatGroup(db *gorm.DB, group_id *string) (string, error) {
 	newChat := Chat{
 		ID:        uuid.NewString(),
 		Name:      "chat-group",

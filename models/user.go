@@ -9,6 +9,8 @@ type User struct {
 	ID       string `gorm:"primaryKey;type:char(36)" json:"id"`
 	Username string `gorm:"unique;not null" json:"username"`
 	Email    string `gorm:"unique;not null" json:"email"`
+	Selected bool   `gorm:"default:false" json:"selected"` // Tambahkan untuk checkout
+
 }
 
 func GetChatHistory(db *gorm.DB, chatID string) ([]Message, error) {

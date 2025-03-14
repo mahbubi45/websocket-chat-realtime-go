@@ -12,7 +12,7 @@ import (
 type Chat struct {
 	ID        string    `gorm:"type:char(36);primaryKey"`
 	Name      string    `gorm:"null" json:"Name"`
-	GroupID   string    `gorm:"type:char(36);index"` // NULL jika chat pribadi
+	GroupID   *string   `gorm:"type:char(36);index"` // NULL jika chat pribadi
 	CreatedAt time.Time `gorm:"autoCreateTime"`
 	Group     *Group    `gorm:"foreignKey:GroupID"` // Relasi opsional ke grup
 	Messages  []Message `gorm:"foreignKey:ChatID"`  // Relasi ke pesan
@@ -75,6 +75,7 @@ func CreateNewChat(db *gorm.DB) (string, error) {
 	newChat := Chat{
 		ID:        uuid.NewString(),
 		Name:      "chat Private",
+		GroupID:   nil,
 		CreatedAt: time.Now(),
 	}
 

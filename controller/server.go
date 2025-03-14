@@ -24,11 +24,12 @@ func (s *Server) ConnectDatabase() {
 	}
 
 	// Auto-migrate tabel
-	// database.AutoMigrate(
-	// 	&models.User{},
-	// 	&models.Chat{},
-	// 	&models.ChatMember{},
-	// 	&models.Message{})
+	// cndatabase.AutoMigrate(
+	// &models.User{},
+	// &models.Chat{},
+	// &models.GroupMember{},
+	// &models.Message{},
+	// )
 
 	s.DB = cndatabase
 	s.R = mux.NewRouter()
